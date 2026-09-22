@@ -3,7 +3,7 @@
 Takes a hand-kept client or payments list and returns a clean one, a log of every
 change it made, and a short list of the values it refused to guess at.
 
-**Live demo:** _(link added after deployment)_
+**Live demo:** https://facundosarina-spreadsheet-cleaner.streamlit.app/
 
 Every list kept by hand drifts in the same ways. The same person is entered as
 `JULIETA ORTIZ`, `julieta ortiz` and `  Julieta  Ortiz  `. ID numbers arrive with
@@ -63,7 +63,7 @@ Then open http://localhost:8501. Drop in your own CSV or Excel file, or load one
 of the two sample files.
 
 ```bash
-python -m pytest -q       # the cleaning rules, 9 tests
+python -m pytest -q       # the cleaning rules, 10 tests
 python make_samples.py    # regenerate the sample files
 ```
 
