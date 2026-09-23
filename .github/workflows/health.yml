@@ -1,0 +1,45 @@
+name: Health check
+
+# Twice covered: on a schedule, so a demo that quietly dies is noticed within
+# a day, and on every push, so a change that breaks something is caught the
+# moment it lands. The hand icon in the Actions tab runs it on demand.
+on:
+  schedule:
+    # 11:17 UTC. Deliberately not on the hour -- GitHub queues a spike of jobs
+    # at :00 and scheduled runs get pushed back.
+    - cron: "17 11 * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install what the app needs
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      # Every step below runs even if an earlier one failed. One broken thing
+      # should not hide the other two.
+      - name: The rules still behave
+        if: ${{ always() }}
+        run: python -m pytest -q
+
+      - name: The live demo answers, and is awake
+        if: ${{ always() }}
+        env:
+          DEMO_URL: https://facundosarina-spreadsheet-cleaner.streamlit.app/
+        run: python .github/scripts/check_demo.py
+
+      - name: The README links still lead somewhere
+        if: ${{ always() }}
+        run: python .github/scripts/check_links.py
