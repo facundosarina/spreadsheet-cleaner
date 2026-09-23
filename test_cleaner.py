@@ -15,15 +15,15 @@ def test_name_fixes_spacing_and_case():
 def test_dni_strips_dots_and_flags_wrong_length():
     assert cleaner.clean_dni("28.327.518")[0] == "28327518"
     assert cleaner.clean_dni(" 24269701 ")[0] == "24269701"
-    assert cleaner.clean_dni("315251")[1].startswith("REVIEW")
+    assert cleaner.clean_dni("315251")[1]["review"] is True
 
 
 def test_cuit_formats_and_validates_check_digit():
     value, note = cleaner.clean_cuit("20335722494")
     assert value == "20-33572249-4"
-    assert note == "standardised format"
-    assert cleaner.clean_cuit("20245214166")[1].startswith("REVIEW")
-    assert cleaner.clean_cuit("2033572249")[1].startswith("REVIEW")  # 10 digits
+    assert note["code"] == "format"
+    assert cleaner.clean_cuit("20245214166")[1]["code"] == "check_digit"
+    assert cleaner.clean_cuit("2033572249")[1]["code"] == "digits"  # 10 digits
 
 
 def test_phone_handles_every_local_habit():
@@ -36,7 +36,7 @@ def test_phone_handles_every_local_habit():
 def test_email_trims_and_fixes_known_typos():
     assert cleaner.clean_email("  Lucia.Vega@Gmail.com ")[0] == "lucia.vega@gmail.com"
     assert cleaner.clean_email("tomas@gmail.con")[0] == "tomas@gmail.com"
-    assert cleaner.clean_email("sinarroba.gmail.com")[1].startswith("REVIEW")
+    assert cleaner.clean_email("sinarroba.gmail.com")[1]["review"] is True
 
 
 def test_dates_convert_to_iso():
@@ -44,7 +44,7 @@ def test_dates_convert_to_iso():
     assert cleaner.clean_date("19/6/25")[0] == "2025-06-19"
     assert cleaner.clean_date("2025-07-17")[0] == "2025-07-17"
     assert cleaner.clean_date("3 de marzo de 2026")[0] == "2026-03-03"
-    assert cleaner.clean_date("31/02/2026")[1].startswith("REVIEW")
+    assert cleaner.clean_date("31/02/2026")[1]["code"] == "bad_date"
 
 
 def test_ambiguous_dates_follow_the_column():

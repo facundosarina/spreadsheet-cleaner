@@ -47,6 +47,16 @@ CURRENCY_SYMBOLS = [
 ]
 
 
+def note(code: str, review: bool = False, **params) -> dict:
+    """A machine-readable note.
+
+    The app has to show these in three languages, so a rule returns a code and
+    its parameters, never a finished English sentence. `review=True` marks the
+    ones the tool refuses to decide on its own.
+    """
+    return {"code": code, "review": review, **params}
+
+
 def _blank(value) -> bool:
     return value is None or str(value).strip() == "" or str(value).strip().lower() in {"nan", "none", "-", "--", "s/d"}
 
@@ -71,12 +81,9 @@ def clean_name(value):
     result = " ".join(words)
     if result == raw:
         return result, None
-    reasons = []
     if raw != raw.strip() or "  " in raw:
-        reasons.append("extra spaces")
-    if raw.strip() != result and raw.strip().lower() == result.lower():
-        reasons.append("capitalisation")
-    return result, ", ".join(reasons) or "reformatted"
+        return result, note("spaces")
+    return result, note("caps")
 
 
 # --------------------------------------------------------------------------
@@ -89,12 +96,12 @@ def clean_dni(value):
     raw = str(value).strip()
     digits = re.sub(r"\D", "", raw)
     if not digits:
-        return raw, "REVIEW: no digits found"
+        return raw, note("no_digits", review=True)
     if len(digits) < 7 or len(digits) > 8:
-        return digits, f"REVIEW: {len(digits)} digits, expected 7 or 8"
+        return digits, note("digits", review=True, n=len(digits), expected="7-8")
     if digits == raw:
         return digits, None
-    return digits, "removed dots/spaces"
+    return digits, note("format")
 
 
 # --------------------------------------------------------------------------
@@ -120,13 +127,13 @@ def clean_cuit(value):
     raw = str(value).strip()
     digits = re.sub(r"\D", "", raw)
     if len(digits) != 11:
-        return raw, f"REVIEW: {len(digits)} digits, expected 11"
+        return raw, note("digits", review=True, n=len(digits), expected="11")
     formatted = f"{digits[:2]}-{digits[2:10]}-{digits[10]}"
     if cuit_check_digit(digits[:10]) != int(digits[10]):
-        return formatted, "REVIEW: check digit does not match"
+        return formatted, note("check_digit", review=True)
     if formatted == raw:
         return formatted, None
-    return formatted, "standardised format"
+    return formatted, note("format")
 
 
 # --------------------------------------------------------------------------
@@ -140,7 +147,7 @@ def clean_phone(value):
     raw = str(value).strip()
     digits = re.sub(r"\D", "", raw)
     if not digits:
-        return raw, "REVIEW: no digits found"
+        return raw, note("no_digits", review=True)
 
     if digits.startswith("0054"):
         digits = digits[4:]
@@ -158,14 +165,14 @@ def clean_phone(value):
         digits = digits[:3] + digits[5:]
 
     if len(digits) != 10:
-        return raw, f"REVIEW: {len(digits)} digits after cleanup, expected 10"
+        return raw, note("digits", review=True, n=len(digits), expected="10")
 
     area = digits[:2] if digits.startswith("11") else digits[:3]
     rest = digits[len(area):]
     formatted = f"+54 9 {area} {rest}"
     if formatted == raw:
         return formatted, None
-    return formatted, "standardised format"
+    return formatted, note("format")
 
 
 # --------------------------------------------------------------------------
@@ -177,17 +184,18 @@ def clean_email(value):
         return "", None
     raw = str(value)
     result = re.sub(r"\s+", "", raw).lower()
-    reasons = []
-    if result != raw:
-        reasons.append("spaces/uppercase")
+    changed = result != raw
+    fixed_domain = False
     if "@" in result:
         local, _, domain = result.rpartition("@")
         if domain in _DOMAIN_TYPOS:
             result = f"{local}@{_DOMAIN_TYPOS[domain]}"
-            reasons.append("domain typo")
+            fixed_domain = True
     if not _EMAIL_RE.match(result):
-        return result, "REVIEW: not a valid address"
-    return result, ", ".join(reasons) or None
+        return result, note("bad_email", review=True)
+    if fixed_domain:
+        return result, note("domain")
+    return result, note("spaces") if changed else None
 
 
 # --------------------------------------------------------------------------
@@ -259,11 +267,11 @@ def clean_date(value, day_first: bool = True):
     raw = str(value).strip()
     parsed = _try_numeric_date(raw, day_first) or _try_written_date(raw)
     if parsed is None:
-        return raw, "REVIEW: unrecognised date format"
+        return raw, note("bad_date", review=True)
     result = parsed.isoformat()
     if result == raw:
         return result, None
-    return result, "converted to YYYY-MM-DD"
+    return result, note("iso")
 
 
 # --------------------------------------------------------------------------
@@ -285,7 +293,7 @@ def clean_amount(value):
 
     body = re.sub(r"[^\d,.\-]", "", raw)
     if not re.search(r"\d", body):
-        return None, currency, "REVIEW: no number found"
+        return None, currency, note("no_digits", review=True)
 
     dots, commas = body.count("."), body.count(",")
     if dots and commas:
@@ -307,9 +315,6 @@ def clean_amount(value):
     try:
         amount = round(float(body), 2)
     except ValueError:
-        return None, currency, "REVIEW: could not read the number"
+        return None, currency, note("bad_number", review=True)
 
-    note = None
-    if f"{amount:.2f}" != raw:
-        note = "parsed to a number"
-    return amount, currency, note
+    return amount, currency, note("number") if f"{amount:.2f}" != raw else None

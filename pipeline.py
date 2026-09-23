@@ -2,8 +2,8 @@
 pipeline.py
 
 Applies the rules from cleaner.py to a whole table: works out what each column
-holds, cleans it row by row, records every change, and flags the rows a person
-still has to look at.
+holds, cleans it row by row, records every change with a code the interface can
+translate, and separates the values a person still has to decide on.
 """
 
 from __future__ import annotations
@@ -15,42 +15,22 @@ import pandas as pd
 
 import cleaner
 
+KINDS = ["name", "dni", "cuit", "phone", "email", "date", "amount", "category", "text"]
+
 # Header keywords -> column kind. Checked in order, Spanish and English.
 _HEADER_HINTS = [
     ("cuit", "cuit"), ("cuil", "cuit"), ("tax id", "cuit"),
     ("dni", "dni"), ("documento", "dni"), ("nro doc", "dni"), ("id number", "dni"),
     ("email", "email"), ("mail", "email"), ("correo", "email"),
-    ("tel", "phone"), ("cel", "phone"), ("phone", "phone"), ("movil", "phone"), ("whatsapp", "phone"),
+    ("tel", "phone"), ("cel", "phone"), ("phone", "phone"), ("movil", "phone"),
+    ("whatsapp", "phone"),
     ("fecha", "date"), ("date", "date"), ("vencimiento", "date"), ("alta", "date"),
     ("importe", "amount"), ("monto", "amount"), ("amount", "amount"),
     ("total", "amount"), ("precio", "amount"), ("saldo", "amount"), ("pago", "amount"),
     ("nombre", "name"), ("apellido", "name"), ("cliente", "name"),
-    ("razon social", "name"), ("name", "name"), ("titular", "name"), ("proveedor", "name"),
+    ("razon social", "name"), ("name", "name"), ("titular", "name"),
+    ("proveedor", "name"),
 ]
-
-KIND_LABELS = {
-    "name": "Name",
-    "dni": "ID number (DNI)",
-    "cuit": "Tax ID (CUIT)",
-    "phone": "Phone",
-    "email": "Email",
-    "date": "Date",
-    "amount": "Amount",
-    "category": "Category",
-    "text": "Free text",
-}
-
-
-def canonical_categories(values) -> dict[str, str]:
-    """Map every spelling of a label to the one used most often in the column."""
-    counts: dict[str, dict[str, int]] = {}
-    for value in values:
-        if cleaner._blank(value):
-            continue
-        tidy = re.sub(r"\s+", " ", str(value)).strip()
-        counts.setdefault(tidy.lower(), {}).setdefault(tidy, 0)
-        counts[tidy.lower()][tidy] += 1
-    return {key: max(variants, key=variants.get) for key, variants in counts.items()}
 
 
 def _slug(text: str) -> str:
@@ -91,85 +71,107 @@ def detect_kind(header: str, sample: pd.Series) -> str:
     return "text"
 
 
+def detect_kinds(df: pd.DataFrame) -> dict[str, str]:
+    return {column: detect_kind(column, df[column]) for column in df.columns}
+
+
+def canonical_categories(values) -> dict[str, str]:
+    """Map every spelling of a label to the one used most often in the column."""
+    counts: dict[str, dict[str, int]] = {}
+    for value in values:
+        if cleaner._blank(value):
+            continue
+        tidy = re.sub(r"\s+", " ", str(value)).strip()
+        counts.setdefault(tidy.lower(), {}).setdefault(tidy, 0)
+        counts[tidy.lower()][tidy] += 1
+    return {key: max(variants, key=variants.get) for key, variants in counts.items()}
+
+
+def _clean_value(kind: str, raw_value, day_first: bool, canonical: dict):
+    """Route one value to its rule. Returns (value, currency, note)."""
+    if kind == "name":
+        value, note = cleaner.clean_name(raw_value)
+    elif kind == "dni":
+        value, note = cleaner.clean_dni(raw_value)
+    elif kind == "cuit":
+        value, note = cleaner.clean_cuit(raw_value)
+    elif kind == "phone":
+        value, note = cleaner.clean_phone(raw_value)
+    elif kind == "email":
+        value, note = cleaner.clean_email(raw_value)
+    elif kind == "date":
+        value, note = cleaner.clean_date(raw_value, day_first)
+    elif kind == "amount":
+        return cleaner.clean_amount(raw_value)
+    elif kind == "category":
+        if cleaner._blank(raw_value):
+            return "", None, None
+        tidy = re.sub(r"\s+", " ", str(raw_value)).strip()
+        value = canonical.get(tidy.lower(), tidy)
+        note = cleaner.note("unified") if value != str(raw_value) else None
+    else:
+        if cleaner._blank(raw_value):
+            return "", None, None
+        value = re.sub(r"\s+", " ", str(raw_value)).strip()
+        note = cleaner.note("spaces") if value != str(raw_value) else None
+    return value, None, note
+
+
 def clean_table(df: pd.DataFrame, kinds: dict[str, str]) -> dict:
     """Clean every column and return the results plus a full change log."""
     clean = pd.DataFrame(index=df.index)
     changes: list[dict] = []
     review: list[dict] = []
+    changed_cells: set[tuple] = set()
 
     for column in df.columns:
         kind = kinds.get(column, "text")
         original = df[column]
-
-        if kind == "date":
-            day_first = cleaner.column_is_day_first(original)
-        if kind == "category":
-            canonical = canonical_categories(original)
+        day_first = cleaner.column_is_day_first(original) if kind == "date" else True
+        canonical = canonical_categories(original) if kind == "category" else {}
         if kind == "amount":
-            clean[f"{column} (currency)"] = ""
+            clean[f"{column} (moneda)"] = ""
 
         for row_index, raw_value in original.items():
-            currency = None
-            if kind == "name":
-                value, note = cleaner.clean_name(raw_value)
-            elif kind == "dni":
-                value, note = cleaner.clean_dni(raw_value)
-            elif kind == "cuit":
-                value, note = cleaner.clean_cuit(raw_value)
-            elif kind == "phone":
-                value, note = cleaner.clean_phone(raw_value)
-            elif kind == "email":
-                value, note = cleaner.clean_email(raw_value)
-            elif kind == "date":
-                value, note = cleaner.clean_date(raw_value, day_first)
-            elif kind == "amount":
-                value, currency, note = cleaner.clean_amount(raw_value)
-            elif kind == "category":
-                if cleaner._blank(raw_value):
-                    value, note = "", None
-                else:
-                    tidy = re.sub(r"\s+", " ", str(raw_value)).strip()
-                    value = canonical.get(tidy.lower(), tidy)
-                    note = "unified spelling" if value != str(raw_value) else None
-            else:
-                if cleaner._blank(raw_value):
-                    value, note = "", None
-                else:
-                    value = re.sub(r"\s+", " ", str(raw_value)).strip()
-                    note = "extra spaces" if value != str(raw_value) else None
-
+            value, currency, note = _clean_value(kind, raw_value, day_first, canonical)
             clean.loc[row_index, column] = value
             if currency:
-                clean.loc[row_index, f"{column} (currency)"] = currency
+                clean.loc[row_index, f"{column} (moneda)"] = currency
 
-            if note:
-                entry = {
-                    "row": int(row_index) + 2,  # +2 = header row plus 1-based rows
-                    "column": column,
-                    "before": "" if cleaner._blank(raw_value) else str(raw_value),
-                    "after": "" if value is None else str(value),
-                    "what changed": note.replace("REVIEW: ", ""),
-                }
-                if note.startswith("REVIEW:"):
-                    review.append(entry)
-                else:
-                    changes.append(entry)
+            if not note:
+                continue
+
+            entry = {
+                "row_index": row_index,
+                "row": int(row_index) + 2,  # +2 = header row plus 1-based rows
+                "column": column,
+                "kind": kind,
+                "before": "" if cleaner._blank(raw_value) else str(raw_value),
+                "after": "" if value is None else str(value),
+                "code": note["code"],
+                "params": {k: v for k, v in note.items() if k not in {"code", "review"}},
+            }
+            if note.get("review"):
+                review.append(entry)
+            else:
+                changes.append(entry)
+                changed_cells.add((row_index, column))
 
     # Keep the original column order, with each currency column right after the
     # amount it belongs to.
     ordered: list[str] = []
     for column in df.columns:
         ordered.append(column)
-        if f"{column} (currency)" in clean.columns:
-            ordered.append(f"{column} (currency)")
+        if f"{column} (moneda)" in clean.columns:
+            ordered.append(f"{column} (moneda)")
     clean = clean[ordered]
 
-    duplicates = find_duplicates(clean, kinds)
     return {
         "clean": clean,
         "changes": pd.DataFrame(changes),
         "review": pd.DataFrame(review),
-        "duplicates": duplicates,
+        "duplicates": find_duplicates(clean, kinds),
+        "changed_cells": changed_cells,
     }
 
 
@@ -177,7 +179,7 @@ def find_duplicates(clean: pd.DataFrame, kinds: dict[str, str]) -> pd.DataFrame:
     """Flag repeats by identity column (DNI/CUIT/email), then by whole row."""
     key_columns = [c for c, k in kinds.items() if k in {"dni", "cuit", "email"} and c in clean.columns]
     rows: list[dict] = []
-    seen_rows: set[int] = set()
+    seen_rows: set = set()
 
     for column in key_columns:
         values = clean[column].astype(str).str.strip()
@@ -190,10 +192,12 @@ def find_duplicates(clean: pd.DataFrame, kinds: dict[str, str]) -> pd.DataFrame:
                     continue
                 seen_rows.add(row_index)
                 rows.append({
+                    "row_index": row_index,
                     "row": int(row_index) + 2,
-                    "repeated field": column,
+                    "column": column,
                     "value": key,
-                    "first seen in row": int(matching[0]) + 2,
+                    "first_row_index": matching[0],
+                    "first_row": int(matching[0]) + 2,
                 })
 
     exact = clean.duplicated(keep="first")
@@ -202,10 +206,15 @@ def find_duplicates(clean: pd.DataFrame, kinds: dict[str, str]) -> pd.DataFrame:
             continue
         seen_rows.add(row_index)
         rows.append({
+            "row_index": row_index,
             "row": int(row_index) + 2,
-            "repeated field": "whole row",
-            "value": "identical to an earlier row",
-            "first seen in row": "-",
+            "column": "",
+            "value": "",
+            "first_row_index": None,
+            "first_row": None,
         })
 
-    return pd.DataFrame(rows).sort_values("row").reset_index(drop=True) if rows else pd.DataFrame()
+    if not rows:
+        return pd.DataFrame(columns=["row_index", "row", "column", "value",
+                                     "first_row_index", "first_row"])
+    return pd.DataFrame(rows).sort_values("row").reset_index(drop=True)
