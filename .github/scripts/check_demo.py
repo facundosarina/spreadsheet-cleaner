@@ -11,6 +11,7 @@ Reads DEMO_URL from the environment. Exits non-zero, with a plain-English
 reason, when a visitor would not get the app.
 """
 
+import http.cookiejar
 import os
 import sys
 import time
@@ -30,13 +31,21 @@ ASLEEP_MARKERS = (
 
 
 def fetch(url: str) -> tuple[int, str, float]:
-    request = urllib.request.Request(
-        url,
-        # Without a normal user agent some hosts answer differently.
-        headers={"User-Agent": "Mozilla/5.0 (portfolio health check)"},
+    """One visit, the way a browser would make it.
+
+    Streamlit Cloud greets a new visitor with a 303 to the same address and
+    expects a cookie back; a client that does not keep cookies is sent round
+    the same loop forever and reports a redirect error, which looks exactly
+    like an outage and is not one. So: keep the cookies, like a browser.
+    """
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
     )
+    # Without a normal user agent some hosts answer differently.
+    opener.addheaders = [("User-Agent", "Mozilla/5.0 (portfolio health check)")]
+
     started = time.monotonic()
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with opener.open(url, timeout=60) as response:
         body = response.read(200_000).decode("utf-8", errors="replace")
         return response.status, body, time.monotonic() - started
 
