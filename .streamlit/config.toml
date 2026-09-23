@@ -1,0 +1,7 @@
+[server]
+# The upload screen promises 20 MB; make that true instead of leaving
+# Streamlit's 200 MB default, which would accept a file and then struggle.
+maxUploadSize = 20
+
+[theme]
+primaryColor = "#17868F"
